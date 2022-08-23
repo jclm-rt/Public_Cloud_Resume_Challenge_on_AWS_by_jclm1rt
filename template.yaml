@@ -1,0 +1,273 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  CloudResumeChallenge-jclm1rt
+
+  Sample SAM Template for CloudResumeChallenge-jclm1rt
+
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    Timeout: 3
+
+Parameters:
+  HostedZoneParameter:
+    Type: String
+    Description: The hosted zone for the Route53 records
+    Default: "{Your_HostedZoneParameter}"
+  DomainNameParameter:
+    Type: String
+    Description: The domain name of the site
+    Default: "juliocesarlapaca.com"
+  ApiDomainNameParameter:
+    Type: String
+    Description: The subdomain of the API
+    Default: "api.juliocesarlapaca.com"
+  ResumeWebsiteDomainName:
+    Type: String
+    Description: The subdomain of the website
+    Default: "resume.juliocesarlapaca.com"
+
+Resources:
+  MyProWebsite:
+    Type: AWS::S3::Bucket
+    Properties:
+      AccessControl: PublicRead
+      WebsiteConfiguration:
+        IndexDocument: index.html
+      BucketName: my-amazing-website-jclm1rt
+      Tags:
+      - Key: ambiente
+        Value: produccion
+
+  DynamoDBTablePro:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: cloud-resume-challenge-jclm1rt-pro
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: "ID"
+          AttributeType: "S"
+      KeySchema:
+        - AttributeName: "ID"
+          KeyType: "HASH"
+      StreamSpecification: 
+          StreamViewType: NEW_AND_OLD_IMAGES
+      Tags:
+      - Key: ambiente
+        Value: produccion
+
+  MyRoute53Record:
+    Type: "AWS::Route53::RecordSetGroup"
+    Properties:
+      HostedZoneId: !Ref HostedZoneParameter
+      RecordSets:
+        - Name: !Ref ResumeWebsiteDomainName
+          Type: A
+          AliasTarget:
+            HostedZoneId: Z2FDTNDATAQYW2
+            DNSName: !GetAtt MyDistribution.DomainName
+
+  MyCertificate:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: !Join ["", ["*.", !Ref DomainNameParameter]]
+      SubjectAlternativeNames:
+        - !Ref DomainNameParameter
+        - !Join ["", ["*.", !Ref DomainNameParameter]]
+      DomainValidationOptions:
+        - DomainName: !Ref DomainNameParameter
+          HostedZoneId:
+            Ref: HostedZoneParameter
+      ValidationMethod: DNS
+
+  cloudfrontoriginaccessidentity:
+    Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+    Properties:
+      CloudFrontOriginAccessIdentityConfig:
+        Comment: oai-for-s3-to-cf
+
+  MyDistribution:
+    Type: "AWS::CloudFront::Distribution"
+    Properties:
+      DistributionConfig:
+        ViewerCertificate:
+          AcmCertificateArn: !Ref MyCertificate
+          SslSupportMethod: sni-only
+          MinimumProtocolVersion: TLSv1.2_2021
+        Aliases:
+          - !Ref ResumeWebsiteDomainName 
+        DefaultCacheBehavior:
+          ViewerProtocolPolicy: redirect-to-https
+          TargetOriginId: my-amazing-website-jclm1rt.s3.us-east-1.amazonaws.com
+          DefaultTTL: 0
+          MinTTL: 0
+          MaxTTL: 0
+          ForwardedValues:
+            QueryString: false
+        Origins:
+          - DomainName: my-amazing-website-jclm1rt.s3.us-east-1.amazonaws.com
+            Id: my-amazing-website-jclm1rt.s3.us-east-1.amazonaws.com
+            S3OriginConfig:
+              OriginAccessIdentity: !Sub 'origin-access-identity/cloudfront/${cloudfrontoriginaccessidentity}'
+        Enabled: true
+        DefaultRootObject: index.html
+        Logging:
+          Bucket: jclm1rt-mylogs.s3.us-east-1.amazonaws.com
+          IncludeCookies: false
+          Prefix: my-amazing-website
+      Tags:
+        - Key: ambiente
+          Value: produccion
+
+  BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      PolicyDocument:
+        Id: MyPolicy
+        Version: 2012-10-17
+        Statement:
+          - Sid: PublicReadForGetBucketObjects
+            Effect: Allow
+            Principal: 
+              AWS: !Join [ "", ["arn:aws:iam::cloudfront:user/CloudFront Origin Access Identity ", !Ref cloudfrontoriginaccessidentity]]
+            Action: "s3:GetObject"
+            Resource: !Join
+              - ""
+              - - "arn:aws:s3:::"
+                - !Ref MyProWebsite
+                - /*
+      Bucket: !Ref MyProWebsite
+
+
+  ApiGatewayProd:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: Prod
+      Domain:
+        DomainName: api.juliocesarlapaca.com
+        CertificateArn: !Ref MyCertificate
+        Route53:
+          HostedZoneName: "juliocesarlapaca.com."
+
+
+ 
+  GetFunction:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: cloud-resume-challenge-jclm1rt-pro
+      CodeUri: get-function-pro/
+      Handler: app.lambda_handler
+      Runtime: python3.8
+      Events:
+        GetNumVisitors:
+          Type: Api # More info about API Event Source: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#api
+          Properties:
+            Path: /get
+            Method: get
+            RestApiId: !Ref ApiGatewayProd
+
+  MyAuthFunctionProd:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      CodeUri: My-AuthFunction-Prod/
+      Handler: app.lambda_handler
+      Runtime: python3.8
+
+  SlackFunction:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      Policies:
+        - DynamoDBStreamReadPolicy:
+            TableName: !GetAtt DynamoDBTablePro.Arn
+            StreamName: !GetAtt DynamoDBTablePro.StreamArn
+        - AWSSecretsManagerGetSecretValuePolicy:
+            SecretArn: arn:aws:secretsmanager:us-east-1:{Your_AWS_Account_ID}:secret:prod/slack/webhook-flSZPS
+      CodeUri: slack-function-pro/
+      Handler: app.lambda_handler
+      Runtime: python3.8
+      Events:
+        DDBEvent:
+          Type: DynamoDB
+          Properties:
+            Stream: 
+              !GetAtt DynamoDBTablePro.StreamArn   # This must be the name of a DynamoDB table declared in the same template file
+            StartingPosition: TRIM_HORIZON
+            BatchSize: 10
+            Enabled: true
+
+  PutFunction:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: cloud-resume-challenge-jclm1rt-pro
+      CodeUri: put-function-pro/
+      Handler: app.lambda_handler
+      Runtime: python3.8
+      Events:
+        IncNumVisitors:
+          Type: Api # More info about API Event Source: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#api
+          Properties:
+            Path: /put
+            Method: get
+            RestApiId: !Ref ApiGatewayProd
+              
+
+  DDBEventProcesorFunction:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      Policies:
+        - DynamoDBStreamReadPolicy:
+            TableName: !GetAtt DynamoDBTablePro.Arn
+            StreamName: !GetAtt DynamoDBTablePro.StreamArn
+        - SNSCrudPolicy:
+            TopicName: arn:aws:sns:us-east-1:{Your_AWS_Account_ID}:AlertasVisitaWeb
+      CodeUri: DDBEventProcesor-Function-pro/
+      Handler: app.lambda_handler
+      Runtime: python3.8
+      Events:
+        DDBEvent:
+          Type: DynamoDB
+          Properties:
+            Stream: 
+              !GetAtt DynamoDBTablePro.StreamArn   # This must be the name of a DynamoDB table declared in the same template file
+            StartingPosition: TRIM_HORIZON
+            BatchSize: 10
+            Enabled: true
+      EventInvokeConfig:
+        DestinationConfig:
+          OnSuccess:
+            Type: SNS
+            Destination: arn:aws:sns:us-east-1:{Your_AWS_Account_ID}:AlertasVisitaWeb
+          OnFailure:
+            Type: SNS
+            Destination: arn:aws:sns:us-east-1:{Your_AWS_Account_ID}:AlertasVisitaWeb
+
+
+Outputs:
+  # ServerlessRestApi is an implicit API created out of Events key under Serverless::Function
+  # Find out more about other implicit resources you can reference within SAM
+  # https://github.com/awslabs/serverless-application-model/blob/master/docs/internals/generated_resources.rst#api
+  GetFunctionApi:
+    Description: "API Gateway endpoint URL for Prod stage for Get function"
+    Value: !Sub "https://${ApiGatewayProd}.execute-api.${AWS::Region}.amazonaws.com/Prod/get/"
+  GetFunction:
+    Description: "GetFunction Lambda Function ARN"
+    Value: !GetAtt GetFunction.Arn
+  GetFunctionIamRole:
+    Description: "Implicit IAM Role created for Get function"
+    Value: !GetAtt GetFunctionRole.Arn
+  PutFunctionApi:
+    Description: "API Gateway endpoint URL for Prod stage for Put function"
+    Value: !Sub "https://${ApiGatewayProd}.execute-api.${AWS::Region}.amazonaws.com/Prod/put/"
+  PutFunction:
+    Description: "PutFuntion Lambda Function ARN"
+    Value: !GetAtt PutFunction.Arn
+  PutFunctionIamRole:
+    Description: "Implicit IAM Role created for Out function"
+    Value: !GetAtt PutFunctionRole.Arn
+
+

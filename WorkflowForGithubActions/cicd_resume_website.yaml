@@ -1,0 +1,119 @@
+name: CICD cloud resume challenge
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+
+  lint:
+    runs-on: ubuntu-latest
+    env:
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v2
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.8
+      - name: Install linting libraries
+        id: lint-for-getfunction
+        run: |
+            cd get-function-pro
+            pip install flake8
+      - name: Lint with flake8
+        id: lint-cod-get
+        run: |
+            # Select identifies which errors should cause the job to fail
+            flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+            # The exit zero flag will show errors as warnings and not fail the run
+            flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+      - name: Install linting libraries
+        id: lin-for-put-function
+        run: |
+            cd put-function-pro
+            #pip install flake8
+      - name: Lint with flake8
+        id: lint-cod-put
+        run: |
+            # Select identifies which errors should cause the job to fail
+            flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+            # The exit zero flag will show errors as warnings and not fail the run
+            flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+      - name: Install linting libraries
+        id: lint-for-DDBstream
+        run: |
+            cd DDBEventProcesor-Function-pro
+            #pip install flake8
+      - name: Lint with flake8
+        id: lint-cod-DDBstream
+        run: |
+            # Select identifies which errors should cause the job to fail
+            flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+            # The exit zero flag will show errors as warnings and not fail the run
+            flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+      - uses: act10ns/slack@v1
+        with:
+          status: ${{ job.status }}
+          steps: ${{ toJson(steps) }}
+          channel: '#webhook_in'
+        if: always()
+
+  build-and-deploy-infra:
+    runs-on:  ubuntu-latest
+    env:
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+    needs: lint
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-python@v2
+      - uses: aws-actions/setup-sam@v1
+      - name: Acceso a AWS
+        id: aws
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+      - name: construyendo sam
+        id: sam-build
+        run: |
+            sam build
+      - name: Desplpieque de Infraestructura
+        id: IaC
+        run: |
+            sam deploy --no-confirm-changeset --no-fail-on-empty-changeset
+      - uses: act10ns/slack@v1
+        with:
+          status: ${{ job.status }}
+          steps: ${{ toJson(steps) }}
+          channel: '#webhook_in'
+        if: always()
+        
+
+
+  deploy-site:
+    runs-on: ubuntu-latest
+    env:
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+    needs: build-and-deploy-infra
+    steps:
+      - uses: actions/checkout@v2
+      - name: Subir CV a S3 
+        id: cv-up
+        uses: jakejarvis/s3-sync-action@master
+        with:
+          args: --delete
+        env:
+          AWS_S3_BUCKET: my-amazing-website-jclm1rt
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          SOURCE_DIR: CloudResumeChallenge-jclm1rt/resume-site
+      - uses: act10ns/slack@v1
+        with:
+          status: ${{ job.status }}
+          steps: ${{ toJson(steps) }}
+          channel: '#webhook_in'
+        if: always()
